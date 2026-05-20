@@ -1,0 +1,62 @@
+{
+	"Name": "Dell Monitor Input",
+	"Version": "1.0.0.0",
+	"Author": "Simon Poirier",
+	"Actions": [
+		{
+			"Name": "Set Monitor Input",
+			"UUID": "com.simonpoirier.monitorinput.setinput",
+			"Icon": "imgs/actions/input-switcher",
+			"Tooltip": "Switch a monitor to a specific input source via DDC/CI.",
+			"PropertyInspectorPath": "ui/set-input.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/keys/background",
+					"TitleAlignment": "middle",
+					"TitleColor": "#FFFFFF"
+				}
+			],
+			"SupportedInMultiActions": true
+		},
+		{
+			"Name": "Toggle Monitor Input",
+			"UUID": "com.simonpoirier.monitorinput.toggleinput",
+			"Icon": "imgs/actions/input-switcher",
+			"Tooltip": "Cycle a monitor through a list of input sources on each press.",
+			"PropertyInspectorPath": "ui/toggle-input.html",
+			"Controllers": [
+				"Keypad"
+			],
+			"States": [
+				{
+					"Image": "imgs/keys/background",
+					"TitleAlignment": "middle",
+					"TitleColor": "#FFFFFF"
+				}
+			]
+		}
+	],
+	"Category": "Monitor Control",
+	"CategoryIcon": "imgs/plugin/category-icon",
+	"CodePath": "bin/plugin.js",
+	"Description": "Switch Dell monitor input source via DDC/CI from your Stream Deck",
+	"Icon": "imgs/plugin/marketplace",
+	"SDKVersion": 2,
+	"Software": {
+		"MinimumVersion": "6.9"
+	},
+	"OS": [
+		{
+			"Platform": "windows",
+			"MinimumVersion": "10"
+		}
+	],
+	"Nodejs": {
+		"Version": "20",
+		"Debug": "enabled"
+	},
+	"UUID": "com.simonpoirier.monitorinput"
+}

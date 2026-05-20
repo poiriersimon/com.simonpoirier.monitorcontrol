@@ -1,0 +1,84 @@
+/* Common PI styles — matches Stream Deck dark theme */
+body {
+  font-family: "Segoe UI", system-ui, sans-serif;
+  color: #f4f4f4;
+  background: #2d2d30;
+  margin: 0;
+  padding: 12px 14px;
+  font-size: 13px;
+}
+
+.field {
+  margin-bottom: 12px;
+}
+
+label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+
+input, select {
+  width: 100%;
+  box-sizing: border-box;
+  background: #3e3e42;
+  border: 1px solid #555;
+  color: #f4f4f4;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+input:focus, select:focus {
+  outline: none;
+  border-color: #0078d4;
+}
+
+.row {
+  display: flex;
+  gap: 6px;
+}
+
+.row select {
+  flex: 1;
+}
+
+.row button {
+  flex-shrink: 0;
+  width: 32px;
+  padding: 0;
+  font-size: 16px;
+  background: #3e3e42;
+  border: 1px solid #555;
+  color: #f4f4f4;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.row button:hover {
+  background: #505054;
+}
+
+button.secondary {
+  background: #3e3e42;
+  border: 1px solid #555;
+  color: #f4f4f4;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+button.secondary:hover {
+  background: #505054;
+}
+
+.hint {
+  margin-top: 14px;
+  font-size: 11px;
+  opacity: 0.65;
+  line-height: 1.5;
+}

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Toggle Monitor Input</title>
+  <link rel="stylesheet" href="common.css">
+</head>
+<body>
+  <div class="field">
+    <label for="monitorIndex">Monitor</label>
+    <div class="row">
+      <select id="monitorIndex"><option value="0">Loading…</option></select>
+      <button id="refresh" title="Refresh monitor list">⟳</button>
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="inputSources">Inputs to Cycle (comma-separated hex)</label>
+    <input id="inputSources" type="text" placeholder="0x03,0x0F" value="">
+  </div>
+
+  <div class="hint">
+    Enter two or more input source codes separated by commas.<br>
+    Each key press will switch to the next input in the list.<br>
+    <br>
+    Common codes: VGA1=0x01, VGA2=0x02, DVI1=0x03, DVI2=0x04,<br>
+    DP1=0x0F, DP2=0x10, HDMI1=0x11, HDMI2=0x12, USB-C=0x1B<br>
+    <br>
+    <button id="detect" class="secondary">Detect Current Input</button>
+    <span id="detected"></span>
+  </div>
+
+  <script src="common.js"></script>
+  <script src="toggle-input.js"></script>
+</body>
+</html>
