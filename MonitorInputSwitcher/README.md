@@ -64,6 +64,7 @@ streamdeck link com.simonpoirier.monitorinput.sdPlugin
 ## Property Inspector Features
 
 - **Monitor auto-discovery** — the dropdown lists all connected physical monitors detected via DDC/CI.
+- **Stable monitor restore** — the selected monitor description is saved and matched again after reboot, so monitor order changes do not break mappings.
 - **Refresh** button to re-enumerate monitors.
 - **Detect Current Input** (Toggle action) — reads the active VCP 0x60 value.
 

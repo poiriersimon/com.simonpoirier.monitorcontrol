@@ -10,6 +10,7 @@ export class ToggleInput extends SingletonAction<ToggleInputSettings> {
 
 	override async onWillAppear(ev: WillAppearEvent<ToggleInputSettings>): Promise<void> {
 		const settings = await ev.action.getSettings();
+		await this.ensureMonitorBinding(ev.action, settings);
 		await this.updateTitle(ev.action, settings);
 	}
 
@@ -20,7 +21,6 @@ export class ToggleInput extends SingletonAction<ToggleInputSettings> {
 
 	override async onKeyDown(ev: KeyDownEvent<ToggleInputSettings>): Promise<void> {
 		const settings = await ev.action.getSettings();
-		const monitorIndex = settings.monitorIndex ?? 0;
 		const inputs = parseInputList(settings.inputSources);
 
 		if (inputs.length < 2) {
@@ -33,6 +33,15 @@ export class ToggleInput extends SingletonAction<ToggleInputSettings> {
 		let nextIdx = (currentIdx + 1) % inputs.length;
 
 		try {
+			const monitor = await MonitorService.resolveMonitor(settings);
+			if (!monitor) {
+				await ev.action.setTitle("ERR");
+				streamDeck.logger.error("No DDC/CI monitors were detected");
+				return;
+			}
+
+			await this.ensureMonitorBinding(ev.action, settings, monitor);
+			const monitorIndex = monitor.index;
 			const ok = await MonitorService.setInput(monitorIndex, inputs[nextIdx]);
 			if (ok) {
 				const label = MonitorService.inputLabel(inputs[nextIdx]);
@@ -69,8 +78,14 @@ export class ToggleInput extends SingletonAction<ToggleInputSettings> {
 
 		if (payload.event === "detectInput") {
 			const settings = await ev.action.getSettings();
-			const monitorIndex = settings.monitorIndex ?? 0;
 			try {
+				const monitor = await MonitorService.resolveMonitor(settings);
+				if (!monitor) {
+					await streamDeck.ui.sendToPropertyInspector({ event: "currentInput", inputSource: -1 } as any);
+					return;
+				}
+				await this.ensureMonitorBinding(ev.action, settings, monitor);
+				const monitorIndex = monitor.index;
 				const current = await MonitorService.getInput(monitorIndex);
 				await streamDeck.ui.sendToPropertyInspector({ event: "currentInput", inputSource: current } as any);
 			} catch (error: any) {
@@ -89,6 +104,30 @@ export class ToggleInput extends SingletonAction<ToggleInputSettings> {
 		const safeIdx = idx < inputs.length ? idx : 0;
 		const label = MonitorService.inputLabel(inputs[safeIdx]);
 		await actionObj.setTitle(label);
+	}
+
+	private async ensureMonitorBinding(
+		actionObj: any,
+		settings: ToggleInputSettings,
+		resolvedMonitor?: { index: number; description: string; deviceId?: string },
+	): Promise<void> {
+		const monitor = resolvedMonitor ?? await MonitorService.resolveMonitor(settings);
+		if (!monitor) return;
+
+		const wantsSave =
+			settings.monitorIndex !== monitor.index ||
+			(settings.monitorDescription || "") !== (monitor.description || "") ||
+			(settings.monitorId || "") !== (monitor.deviceId || "");
+
+		if (wantsSave) {
+			const newSettings: ToggleInputSettings = {
+				...settings,
+				monitorIndex: monitor.index,
+				monitorDescription: monitor.description || "",
+				monitorId: monitor.deviceId || "",
+			};
+			await actionObj.setSettings(newSettings);
+		}
 	}
 }
 
@@ -113,6 +152,8 @@ function parseInputList(raw?: string): number[] {
 
 type ToggleInputSettings = {
 	monitorIndex?: number;
+	monitorDescription?: string;
+	monitorId?: string;
 	/** Comma-separated hex values, e.g. "0x0F,0x1B" */
 	inputSources?: string;
 	/** Persisted index into the inputSources list */

@@ -12,7 +12,7 @@ function onSettingsReceived(settings) {
 
 function onPluginMessage(payload) {
   if (payload.event === "monitorList") {
-    populateMonitorDropdown(payload.monitors, _savedSettings.monitorIndex);
+    populateMonitorDropdown(payload.monitors, _savedSettings);
   }
   if (payload.event === "currentInput") {
     var code = payload.inputSource;
@@ -26,8 +26,15 @@ function onPluginMessage(payload) {
 }
 
 function save() {
+  var monitorSelect = document.getElementById("monitorIndex");
+  var selectedOption = monitorSelect.options[monitorSelect.selectedIndex];
+  var monitorDescription = selectedOption ? (selectedOption.dataset.description || "") : "";
+  var monitorId = selectedOption ? (selectedOption.dataset.deviceId || "") : "";
+
   var s = {
-    monitorIndex: parseInt(document.getElementById("monitorIndex").value, 10),
+    monitorIndex: parseInt(monitorSelect.value, 10),
+    monitorDescription: monitorDescription,
+    monitorId: monitorId,
     inputSources: document.getElementById("inputSources").value.trim(),
     currentIndex: _savedSettings.currentIndex || 0
   };
@@ -41,7 +48,7 @@ document.getElementById("inputSources").addEventListener("change", save);
 
 // Refresh monitors button
 document.getElementById("refresh").addEventListener("click", function () {
-  sendToPlugin({ event: "getMonitors" });
+  requestMonitors();
 });
 
 // Detect current input button

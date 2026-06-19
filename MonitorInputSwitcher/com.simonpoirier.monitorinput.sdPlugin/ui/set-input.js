@@ -23,7 +23,7 @@ function onSettingsReceived(settings) {
 
 function onPluginMessage(payload) {
   if (payload.event === "monitorList") {
-    populateMonitorDropdown(payload.monitors, _savedSettings.monitorIndex);
+    populateMonitorDropdown(payload.monitors, _savedSettings);
   }
 }
 
@@ -36,8 +36,15 @@ function getInputSourceValue() {
 }
 
 function save() {
+  var monitorSelect = document.getElementById("monitorIndex");
+  var selectedOption = monitorSelect.options[monitorSelect.selectedIndex];
+  var monitorDescription = selectedOption ? (selectedOption.dataset.description || "") : "";
+  var monitorId = selectedOption ? (selectedOption.dataset.deviceId || "") : "";
+
   var s = {
-    monitorIndex: parseInt(document.getElementById("monitorIndex").value, 10),
+    monitorIndex: parseInt(monitorSelect.value, 10),
+    monitorDescription: monitorDescription,
+    monitorId: monitorId,
     inputSource: getInputSourceValue()
   };
   _savedSettings = s;
@@ -57,5 +64,5 @@ document.getElementById("customInput").addEventListener("change", save);
 
 // Refresh monitors button
 document.getElementById("refresh").addEventListener("click", function () {
-  sendToPlugin({ event: "getMonitors" });
+  requestMonitors();
 });

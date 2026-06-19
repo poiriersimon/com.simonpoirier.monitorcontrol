@@ -9,6 +9,7 @@ export class SetInput extends SingletonAction<SetInputSettings> {
 
 	override async onWillAppear(ev: WillAppearEvent<SetInputSettings>): Promise<void> {
 		const settings = await ev.action.getSettings();
+		await this.ensureMonitorBinding(ev.action, settings);
 		const label = MonitorService.inputLabel(parseInputSource(settings.inputSource));
 		await ev.action.setTitle(label);
 	}
@@ -21,10 +22,18 @@ export class SetInput extends SingletonAction<SetInputSettings> {
 
 	override async onKeyDown(ev: KeyDownEvent<SetInputSettings>): Promise<void> {
 		const settings = await ev.action.getSettings();
-		const monitorIndex = settings.monitorIndex ?? 0;
 		const inputSource = parseInputSource(settings.inputSource);
 
 		try {
+			const monitor = await MonitorService.resolveMonitor(settings);
+			if (!monitor) {
+				await ev.action.setTitle("ERR");
+				streamDeck.logger.error("No DDC/CI monitors were detected");
+				return;
+			}
+
+			await this.ensureMonitorBinding(ev.action, settings, monitor);
+			const monitorIndex = monitor.index;
 			const ok = await MonitorService.setInput(monitorIndex, inputSource);
 			if (ok) {
 				const label = MonitorService.inputLabel(inputSource);
@@ -56,6 +65,30 @@ export class SetInput extends SingletonAction<SetInputSettings> {
 			}
 		}
 	}
+
+	private async ensureMonitorBinding(
+		actionObj: any,
+		settings: SetInputSettings,
+		resolvedMonitor?: { index: number; description: string; deviceId?: string },
+	): Promise<void> {
+		const monitor = resolvedMonitor ?? await MonitorService.resolveMonitor(settings);
+		if (!monitor) return;
+
+		const wantsSave =
+			settings.monitorIndex !== monitor.index ||
+			(settings.monitorDescription || "") !== (monitor.description || "") ||
+			(settings.monitorId || "") !== (monitor.deviceId || "");
+
+		if (wantsSave) {
+			const newSettings: SetInputSettings = {
+				...settings,
+				monitorIndex: monitor.index,
+				monitorDescription: monitor.description || "",
+				monitorId: monitor.deviceId || "",
+			};
+			await actionObj.setSettings(newSettings);
+		}
+	}
 }
 
 function parseInputSource(raw?: string): number {
@@ -71,5 +104,7 @@ function parseInputSource(raw?: string): number {
 
 type SetInputSettings = {
 	monitorIndex?: number;
+	monitorDescription?: string;
+	monitorId?: string;
 	inputSource?: string;
 };
