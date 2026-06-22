@@ -169,6 +169,7 @@ public static class DdcCi {
 const ENRICH_SCRIPT = `
 $ErrorActionPreference = 'SilentlyContinue'
 $bs = [char]92
+$hash = [char]35
 $mons = [DdcCi]::ListMonitors()
 
 function Convert-MonChars($arr) {
@@ -183,13 +184,14 @@ try {
     $name = Convert-MonChars $id.UserFriendlyName
     $manu = Convert-MonChars $id.ManufacturerName
     $prod = Convert-MonChars $id.ProductCodeID
+    $serial = Convert-MonChars $id.SerialNumberID
     if ($name) { $model = $name } else { $model = (("$manu $prod").Trim()) }
     $inst = [string]$id.InstanceName
     if ($inst) {
       $ip = $inst.Split($bs)
       if ($ip.Count -ge 3) {
-        $key = ($ip[1] + $bs + $ip[2]) -replace ('_' + $bs + 'd+$'), ''
-        $map[$key.ToUpperInvariant()] = $model
+        $ckey = ($ip[1] + $bs + $ip[2]) -replace ('_' + $bs + 'd+$'), ''
+        $map[$ckey.ToUpperInvariant()] = @{ model = $model; serial = $serial }
       }
     }
   }
@@ -197,15 +199,25 @@ try {
 
 foreach ($m in $mons) {
   $model = ""
+  $serial = ""
+  $hw = ""
   $devId = [string]$m['deviceId']
   if ($devId) {
-    $dp = $devId.Split([char]35)
+    $dp = $devId.Split($hash)
     if ($dp.Count -ge 3) {
-      $key = ($dp[1] + $bs + $dp[2]).ToUpperInvariant()
-      if ($map.ContainsKey($key)) { $model = $map[$key] }
+      $hw = $dp[1]
+      $ckey = ($dp[1] + $bs + $dp[2]).ToUpperInvariant()
+      if ($map.ContainsKey($ckey)) {
+        $model = $map[$ckey].model
+        $serial = $map[$ckey].serial
+      }
     }
   }
   $m['model'] = $model
+  $m['serial'] = $serial
+  $m['hardwareId'] = $hw
+  if ($serial) { $stableKey = ($hw + $hash + $serial) } else { $stableKey = $hw }
+  $m['key'] = $stableKey.ToUpperInvariant()
 }
 
 $mons | ConvertTo-Json -Compress
@@ -218,12 +230,18 @@ export interface MonitorInfo {
 	deviceId?: string;
 	deviceName?: string;
 	model?: string;
+	serial?: string;
+	hardwareId?: string;
+	/** Stable identity across reboots: hardwareId[#serial]. */
+	key?: string;
 }
 
 export interface MonitorSelectionSettings {
 	monitorIndex?: number;
 	monitorDescription?: string;
 	monitorId?: string;
+	/** Stable identity across reboots: hardwareId[#serial]. */
+	monitorKey?: string;
 }
 
 /**
@@ -312,14 +330,38 @@ export class MonitorService {
     /**
      * Resolve a monitor selection to a current monitor object.
 	 * Priority:
-	 *   1. Unique device interface id (stable across reboots and reorders).
-	 *   2. Description, disambiguated by saved index when duplicated.
-	 *   3. Saved enumeration index.
-	 *   4. First monitor.
+	 *   1. Stable EDID key (hardwareId#serial) — survives reboots and UID reorders.
+	 *   2. Hardware id alone, disambiguated by saved index when duplicated.
+	 *   3. Legacy device interface id.
+	 *   4. Description, disambiguated by saved index when duplicated.
+	 *   5. Saved enumeration index.
+	 *   6. First monitor.
 	 */
 	static async resolveMonitor(settings: MonitorSelectionSettings): Promise<MonitorInfo | null> {
 		const monitors = await this.listMonitors();
 		if (monitors.length === 0) return null;
+
+		const fallbackIndex = settings.monitorIndex;
+
+		const wantedKey = settings.monitorKey?.trim().toUpperCase();
+		if (wantedKey) {
+			const byKey = monitors.find((m) => (m.key || "").toUpperCase() === wantedKey);
+			if (byKey) {
+				return byKey;
+			}
+			// Fall back to the hardware id portion (before the serial).
+			const wantedHw = wantedKey.split("#")[0];
+			if (wantedHw) {
+				const hwMatches = monitors.filter((m) => (m.hardwareId || "").toUpperCase() === wantedHw);
+				if (hwMatches.length === 1) {
+					return hwMatches[0];
+				}
+				if (hwMatches.length > 1) {
+					const byIndex = hwMatches.find((m) => m.index === fallbackIndex);
+					return byIndex || hwMatches[0];
+				}
+			}
+		}
 
 		const wantedId = settings.monitorId?.trim();
 		if (wantedId) {
@@ -329,7 +371,6 @@ export class MonitorService {
 			}
 		}
 
-		const fallbackIndex = settings.monitorIndex;
 		const wantedDescription = settings.monitorDescription?.trim().toLowerCase();
 		if (wantedDescription) {
 			const matches = monitors.filter((m) => (m.description || "").trim().toLowerCase() === wantedDescription);
@@ -364,6 +405,36 @@ export class MonitorService {
 		return monitor?.index ?? 0;
 	}
 
+	/**
+	 * Short, key-sized display name for a monitor. Prefers the EDID model name,
+	 * dropping a leading manufacturer word (e.g. "DELL S3221QS" -> "S3221QS").
+	 */
+	static monitorLabel(settings: TitleSettings, monitor?: MonitorInfo | null): string {
+		const raw = (monitor?.model || settings.monitorModel || settings.monitorDescription || "Monitor").trim();
+		if (!raw) return "Monitor";
+		const parts = raw.split(/\s+/);
+		return parts.length >= 2 ? parts[parts.length - 1] : raw;
+	}
+
+	/**
+	 * Build a two-line key title: monitor name on the first line and the monitor's
+	 * current input source on the second. Reads the live input via DDC/CI.
+	 */
+	static async buildStatusTitle(settings: TitleSettings, monitor?: MonitorInfo | null): Promise<string> {
+		const mon = monitor ?? await this.resolveMonitor(settings);
+		const name = this.monitorLabel(settings, mon);
+		let input = "—";
+		if (mon) {
+			const cur = await this.getInput(mon.index);
+			if (cur >= 0) input = this.inputLabel(cur);
+		}
+		return `${name}\n${input}`;
+	}
+
 	/** Human-readable label for an input source code. */
 	static inputLabel = inputLabel;
+}
+
+export interface TitleSettings extends MonitorSelectionSettings {
+	monitorModel?: string;
 }

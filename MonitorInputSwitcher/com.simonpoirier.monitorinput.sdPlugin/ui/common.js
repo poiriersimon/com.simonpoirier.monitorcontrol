@@ -12,6 +12,9 @@ let $actionInfo = null;
 let $monitorsLoaded = false;
 let $monitorRetries = 0;
 let $monitorRetryTimer = null;
+// The monitor catalog is persisted in global settings and only refreshed when
+// the user clicks Refresh (or on first use when it does not yet exist).
+let $catalog = null;
 
 /**
  * Called by Stream Deck to initialise the PI WebSocket.
@@ -32,11 +35,9 @@ function connectElgatoStreamDeckSocket(inPort, inUUID, inRegisterEvent, inInfo, 
 
   $ws.onopen = function () {
     $ws.send(JSON.stringify({ event: inRegisterEvent, uuid: $uuid }));
-    // request saved settings
+    // request this key's saved settings and the shared monitor catalog
     $ws.send(JSON.stringify({ event: "getSettings", context: $context }));
-    // ask plugin to enumerate monitors (with retry: the plugin process may not
-    // be fully connected yet on a cold start, which would drop the first request)
-    requestMonitors();
+    $ws.send(JSON.stringify({ event: "getGlobalSettings", context: $uuid }));
   };
 
   $ws.onmessage = function (evt) {
@@ -48,22 +49,57 @@ function connectElgatoStreamDeckSocket(inPort, inUUID, inRegisterEvent, inInfo, 
     }
     if (msg.event === "didReceiveSettings") {
       onSettingsReceived((msg.payload && msg.payload.settings) || {});
+      renderMonitors();
+    }
+    if (msg.event === "didReceiveGlobalSettings") {
+      handleGlobalSettings((msg.payload && msg.payload.settings) || {});
     }
     if (msg.event === "sendToPropertyInspector") {
       var p = msg.payload || {};
-      if (p.event === "monitorList" && p.monitors && p.monitors.length > 0) {
-        $monitorsLoaded = true;
-        if ($monitorRetryTimer) { clearTimeout($monitorRetryTimer); $monitorRetryTimer = null; }
+      if (p.event === "monitorList") {
+        if (p.monitors && p.monitors.length > 0) {
+          $monitorsLoaded = true;
+          if ($monitorRetryTimer) { clearTimeout($monitorRetryTimer); $monitorRetryTimer = null; }
+          onMonitorList(p.monitors);
+        }
+      } else {
+        onPluginMessage(p);
       }
-      onPluginMessage(p);
     }
   };
 }
 
 /**
- * Request the monitor list, retrying with backoff until it arrives. This makes
- * the dropdown resilient to cold starts where the plugin process is not yet
- * ready when the property inspector first connects.
+ * Decide how to populate the dropdown from the shared catalog. If a catalog
+ * already exists, use it as-is (static). Otherwise build it once (first use).
+ */
+function handleGlobalSettings(settings) {
+  var cat = settings && settings.monitorCatalog;
+  if (cat && cat.length > 0) {
+    $catalog = cat;
+    renderMonitors();
+  } else {
+    requestMonitors();
+  }
+}
+
+/** A fresh live monitor list arrived: store it as the catalog and render. */
+function onMonitorList(monitors) {
+  $catalog = monitors;
+  setGlobalSettings({ monitorCatalog: monitors });
+  renderMonitors();
+}
+
+/** Render the dropdown from the current catalog and saved selection. */
+function renderMonitors() {
+  if (!$catalog) return;
+  populateMonitorDropdown($catalog, typeof _savedSettings !== "undefined" ? _savedSettings : {});
+}
+
+/**
+ * Request a fresh monitor list, retrying with backoff until it arrives. This is
+ * used on first use and whenever the user clicks Refresh. It makes enumeration
+ * resilient to cold starts where the plugin process is not yet ready.
  */
 function requestMonitors() {
   $monitorsLoaded = false;
@@ -113,10 +149,19 @@ function saveSettings(settings) {
   }));
 }
 
+function setGlobalSettings(obj) {
+  if (!$ws || $ws.readyState !== WebSocket.OPEN || !$uuid) return;
+  $ws.send(JSON.stringify({
+    event: "setGlobalSettings",
+    context: $uuid,
+    payload: obj
+  }));
+}
+
 /**
- * Populate the monitor dropdown with the list from the plugin.
- * @param {Array} monitors - [{index, description}]
- * @param {object|undefined} selectedSettings - saved settings with monitorIndex and monitorDescription
+ * Populate the monitor dropdown from a catalog. Each option carries the stable
+ * monitor key plus a snapshot of identity fields. Selection is restored by the
+ * stable key first so it survives reboots and monitor reordering.
  */
 function populateMonitorDropdown(monitors, selectedSettings) {
   var sel = document.getElementById("monitorIndex");
@@ -124,7 +169,7 @@ function populateMonitorDropdown(monitors, selectedSettings) {
 
   if (!monitors || monitors.length === 0) {
     var opt = document.createElement("option");
-    opt.value = "0";
+    opt.value = "";
     opt.textContent = "No monitors found";
     sel.appendChild(opt);
     return;
@@ -132,60 +177,66 @@ function populateMonitorDropdown(monitors, selectedSettings) {
 
   monitors.forEach(function (m) {
     var opt = document.createElement("option");
-    opt.value = String(m.index);
+    var key = (m.key && String(m.key)) ? String(m.key) : String(m.index);
+    opt.value = key;
     var name = (m.model && String(m.model).trim()) ? String(m.model).trim() : (m.description || "Unknown");
-    var hw = shortHardwareId(m.deviceId);
-    opt.textContent = m.index + ": " + name + (hw ? " [" + hw + "]" : "");
+    var hw = m.hardwareId ? String(m.hardwareId) : shortHardwareId(m.deviceId);
+    opt.textContent = name + (hw ? " [" + hw + "]" : "");
+    opt.dataset.key = key;
+    opt.dataset.index = String(m.index);
     opt.dataset.description = String(m.description || "");
     opt.dataset.deviceId = String(m.deviceId || "");
+    opt.dataset.model = String(m.model || "");
     sel.appendChild(opt);
   });
 
-  var selectedIndex = null;
-  var selectedDescription = null;
-  var selectedId = null;
+  var s = selectedSettings || {};
+  var selectedKey = (s.monitorKey !== undefined && s.monitorKey !== null) ? String(s.monitorKey).trim().toUpperCase() : null;
+  var selectedId = (s.monitorId !== undefined && s.monitorId !== null) ? String(s.monitorId).trim() : null;
+  var selectedDescription = (s.monitorDescription !== undefined && s.monitorDescription !== null) ? String(s.monitorDescription).trim().toLowerCase() : null;
+  var selectedIndex = (s.monitorIndex !== undefined && s.monitorIndex !== null) ? Number(s.monitorIndex) : null;
 
-  if (selectedSettings) {
-    if (selectedSettings.monitorId !== undefined && selectedSettings.monitorId !== null) {
-      selectedId = String(selectedSettings.monitorId).trim();
-    }
-    if (selectedSettings.monitorDescription !== undefined && selectedSettings.monitorDescription !== null) {
-      selectedDescription = String(selectedSettings.monitorDescription).trim().toLowerCase();
-    }
-    if (selectedSettings.monitorIndex !== undefined && selectedSettings.monitorIndex !== null) {
-      selectedIndex = Number(selectedSettings.monitorIndex);
+  // 1. Match by stable key (survives reboots and UID reorders).
+  if (selectedKey) {
+    var byKey = monitors.find(function (m) {
+      return String(m.key || "").toUpperCase() === selectedKey;
+    });
+    if (byKey) {
+      sel.value = (byKey.key && String(byKey.key)) ? String(byKey.key) : String(byKey.index);
+      return;
     }
   }
 
-  // 1. Match by unique device id (most reliable across reboots/reorders).
+  // 2. Match by legacy device id.
   if (selectedId) {
     var byId = monitors.find(function (m) {
       return String(m.deviceId || "").trim() === selectedId;
     });
     if (byId) {
-      sel.value = String(byId.index);
+      sel.value = (byId.key && String(byId.key)) ? String(byId.key) : String(byId.index);
       return;
     }
   }
 
-  // 2. Match by description, disambiguated by saved index when duplicated.
+  // 3. Match by description, disambiguated by saved index when duplicated.
   if (selectedDescription) {
     var descMatches = monitors.filter(function (m) {
       return String(m.description || "").trim().toLowerCase() === selectedDescription;
     });
+    var chosen = null;
     if (descMatches.length === 1) {
-      sel.value = String(descMatches[0].index);
-      return;
+      chosen = descMatches[0];
+    } else if (descMatches.length > 1) {
+      chosen = descMatches.find(function (m) { return m.index === selectedIndex; }) || descMatches[0];
     }
-    if (descMatches.length > 1) {
-      var dup = descMatches.find(function (m) { return m.index === selectedIndex; });
-      sel.value = String((dup || descMatches[0]).index);
+    if (chosen) {
+      sel.value = (chosen.key && String(chosen.key)) ? String(chosen.key) : String(chosen.index);
       return;
     }
   }
 
-  // 3. Fall back to saved index.
-  if (selectedIndex !== null && !Number.isNaN(selectedIndex)) {
-    sel.value = String(selectedIndex);
+  // 4. Fall back to the first option.
+  if (sel.options.length > 0) {
+    sel.selectedIndex = 0;
   }
 }

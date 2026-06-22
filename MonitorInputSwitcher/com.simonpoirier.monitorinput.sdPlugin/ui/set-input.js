@@ -21,10 +21,8 @@ function onSettingsReceived(settings) {
   }
 }
 
+// Monitor list is handled centrally in common.js (static catalog); nothing here.
 function onPluginMessage(payload) {
-  if (payload.event === "monitorList") {
-    populateMonitorDropdown(payload.monitors, _savedSettings);
-  }
 }
 
 function getInputSourceValue() {
@@ -38,13 +36,14 @@ function getInputSourceValue() {
 function save() {
   var monitorSelect = document.getElementById("monitorIndex");
   var selectedOption = monitorSelect.options[monitorSelect.selectedIndex];
-  var monitorDescription = selectedOption ? (selectedOption.dataset.description || "") : "";
-  var monitorId = selectedOption ? (selectedOption.dataset.deviceId || "") : "";
+  var d = selectedOption ? selectedOption.dataset : {};
 
   var s = {
-    monitorIndex: parseInt(monitorSelect.value, 10),
-    monitorDescription: monitorDescription,
-    monitorId: monitorId,
+    monitorKey: (d.key || ""),
+    monitorIndex: parseInt(d.index || "0", 10),
+    monitorDescription: (d.description || ""),
+    monitorId: (d.deviceId || ""),
+    monitorModel: (d.model || ""),
     inputSource: getInputSourceValue()
   };
   _savedSettings = s;

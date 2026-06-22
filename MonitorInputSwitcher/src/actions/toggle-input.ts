@@ -1,5 +1,8 @@
-import streamDeck, { action, SingletonAction, WillAppearEvent, KeyDownEvent, SendToPluginEvent } from "@elgato/streamdeck";
-import { MonitorService } from "../services/monitor-service";
+import streamDeck, { action, SingletonAction, WillAppearEvent, WillDisappearEvent, KeyDownEvent, SendToPluginEvent } from "@elgato/streamdeck";
+import { MonitorService, MonitorInfo } from "../services/monitor-service";
+
+/** How often the key refreshes the monitor's current input source. */
+const REFRESH_MS = 60_000;
 
 /**
  * Action that cycles a monitor through a list of input sources on each key press.
@@ -7,16 +10,24 @@ import { MonitorService } from "../services/monitor-service";
  */
 @action({ UUID: "com.simonpoirier.monitorinput.toggleinput" })
 export class ToggleInput extends SingletonAction<ToggleInputSettings> {
+	/** Per-key interval timers that refresh the displayed current input. */
+	private timers = new Map<string, ReturnType<typeof setInterval>>();
 
 	override async onWillAppear(ev: WillAppearEvent<ToggleInputSettings>): Promise<void> {
 		const settings = await ev.action.getSettings();
-		await this.ensureMonitorBinding(ev.action, settings);
-		await this.updateTitle(ev.action, settings);
+		const monitor = await MonitorService.resolveMonitor(settings);
+		await this.ensureMonitorBinding(ev.action, settings, monitor);
+		await this.refreshTitle(ev.action, settings, monitor);
+		this.startTimer(ev.action);
+	}
+
+	override onWillDisappear(ev: WillDisappearEvent<ToggleInputSettings>): void {
+		this.stopTimer(ev.action.id);
 	}
 
 	override async onDidReceiveSettings(ev: any): Promise<void> {
 		const settings = ev.payload.settings as ToggleInputSettings;
-		await this.updateTitle(ev.action, settings);
+		await this.refreshTitle(ev.action, settings);
 	}
 
 	override async onKeyDown(ev: KeyDownEvent<ToggleInputSettings>): Promise<void> {
@@ -35,23 +46,22 @@ export class ToggleInput extends SingletonAction<ToggleInputSettings> {
 		try {
 			const monitor = await MonitorService.resolveMonitor(settings);
 			if (!monitor) {
-				await ev.action.setTitle("ERR");
+				await ev.action.setTitle("No\nMonitor");
 				streamDeck.logger.error("No DDC/CI monitors were detected");
 				return;
 			}
 
 			await this.ensureMonitorBinding(ev.action, settings, monitor);
-			const monitorIndex = monitor.index;
-			const ok = await MonitorService.setInput(monitorIndex, inputs[nextIdx]);
+			const ok = await MonitorService.setInput(monitor.index, inputs[nextIdx]);
 			if (ok) {
 				const label = MonitorService.inputLabel(inputs[nextIdx]);
 				const newSettings: ToggleInputSettings = { ...settings, currentIndex: nextIdx };
 				await ev.action.setSettings(newSettings);
-				await ev.action.setTitle(`✓ ${label}`);
-				streamDeck.logger.info(`Toggled monitor ${monitorIndex} to ${label} (index ${nextIdx})`);
+				streamDeck.logger.info(`Toggled ${monitor.model || monitor.description} to ${label} (index ${nextIdx})`);
+				await this.refreshTitle(ev.action, newSettings, monitor);
 			} else {
-				await ev.action.setTitle("ERR");
-				streamDeck.logger.error(`Toggle SetVCPFeature failed for monitor ${monitorIndex}`);
+				streamDeck.logger.error(`Toggle SetVCPFeature failed for monitor ${monitor.index}`);
+				await this.refreshTitle(ev.action, settings, monitor);
 			}
 		} catch (error: any) {
 			await ev.action.setTitle("ERR");
@@ -85,8 +95,7 @@ export class ToggleInput extends SingletonAction<ToggleInputSettings> {
 					return;
 				}
 				await this.ensureMonitorBinding(ev.action, settings, monitor);
-				const monitorIndex = monitor.index;
-				const current = await MonitorService.getInput(monitorIndex);
+				const current = await MonitorService.getInput(monitor.index);
 				await streamDeck.ui.sendToPropertyInspector({ event: "currentInput", inputSource: current } as any);
 			} catch (error: any) {
 				streamDeck.logger.error(`Failed to detect input: ${error?.message}`);
@@ -94,22 +103,36 @@ export class ToggleInput extends SingletonAction<ToggleInputSettings> {
 		}
 	}
 
-	private async updateTitle(actionObj: any, settings: ToggleInputSettings): Promise<void> {
-		const inputs = parseInputList(settings.inputSources);
-		if (inputs.length === 0) {
-			await actionObj.setTitle("Toggle\nInput");
-			return;
+	private startTimer(actionObj: any): void {
+		this.stopTimer(actionObj.id);
+		const timer = setInterval(() => {
+			this.refreshTitle(actionObj).catch(() => { /* ignore */ });
+		}, REFRESH_MS);
+		this.timers.set(actionObj.id, timer);
+	}
+
+	private stopTimer(id: string): void {
+		const timer = this.timers.get(id);
+		if (timer) {
+			clearInterval(timer);
+			this.timers.delete(id);
 		}
-		const idx = settings.currentIndex ?? 0;
-		const safeIdx = idx < inputs.length ? idx : 0;
-		const label = MonitorService.inputLabel(inputs[safeIdx]);
-		await actionObj.setTitle(label);
+	}
+
+	private async refreshTitle(actionObj: any, settings?: ToggleInputSettings, monitor?: MonitorInfo | null): Promise<void> {
+		try {
+			const s = settings ?? await actionObj.getSettings();
+			const title = await MonitorService.buildStatusTitle(s, monitor);
+			await actionObj.setTitle(title);
+		} catch (error: any) {
+			streamDeck.logger.error(`Failed to refresh title: ${error?.message}`);
+		}
 	}
 
 	private async ensureMonitorBinding(
 		actionObj: any,
 		settings: ToggleInputSettings,
-		resolvedMonitor?: { index: number; description: string; deviceId?: string },
+		resolvedMonitor?: MonitorInfo | null,
 	): Promise<void> {
 		const monitor = resolvedMonitor ?? await MonitorService.resolveMonitor(settings);
 		if (!monitor) return;
@@ -117,7 +140,9 @@ export class ToggleInput extends SingletonAction<ToggleInputSettings> {
 		const wantsSave =
 			settings.monitorIndex !== monitor.index ||
 			(settings.monitorDescription || "") !== (monitor.description || "") ||
-			(settings.monitorId || "") !== (monitor.deviceId || "");
+			(settings.monitorId || "") !== (monitor.deviceId || "") ||
+			(settings.monitorKey || "") !== (monitor.key || "") ||
+			(settings.monitorModel || "") !== (monitor.model || "");
 
 		if (wantsSave) {
 			const newSettings: ToggleInputSettings = {
@@ -125,6 +150,8 @@ export class ToggleInput extends SingletonAction<ToggleInputSettings> {
 				monitorIndex: monitor.index,
 				monitorDescription: monitor.description || "",
 				monitorId: monitor.deviceId || "",
+				monitorKey: monitor.key || "",
+				monitorModel: monitor.model || "",
 			};
 			await actionObj.setSettings(newSettings);
 		}
@@ -154,6 +181,8 @@ type ToggleInputSettings = {
 	monitorIndex?: number;
 	monitorDescription?: string;
 	monitorId?: string;
+	monitorKey?: string;
+	monitorModel?: string;
 	/** Comma-separated hex values, e.g. "0x0F,0x1B" */
 	inputSources?: string;
 	/** Persisted index into the inputSources list */
