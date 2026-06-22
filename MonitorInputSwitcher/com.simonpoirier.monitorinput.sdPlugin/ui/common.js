@@ -38,6 +38,13 @@ function connectElgatoStreamDeckSocket(inPort, inUUID, inRegisterEvent, inInfo, 
     // request this key's saved settings and the shared monitor catalog
     $ws.send(JSON.stringify({ event: "getSettings", context: $context }));
     $ws.send(JSON.stringify({ event: "getGlobalSettings", context: $uuid }));
+    // Safety net: if the global settings response never arrives (e.g. no catalog
+    // has ever been saved), build the list anyway so the dropdown is never stuck.
+    setTimeout(function () {
+      if (!$catalog && !$monitorsLoaded) {
+        requestMonitors();
+      }
+    }, 1200);
   };
 
   $ws.onmessage = function (evt) {

@@ -261,7 +261,12 @@ export const INPUT_LABELS: Record<number, string> = {
 };
 
 function inputLabel(code: number): string {
-	return INPUT_LABELS[code] ?? `0x${code.toString(16).toUpperCase().padStart(2, "0")}`;
+	if (INPUT_LABELS[code]) return INPUT_LABELS[code];
+	// Some monitors return the input source in the low byte with noise in the
+	// high byte (e.g. 0x0F0F for DisplayPort 1). Fall back to the low byte.
+	const low = code & 0xff;
+	if (INPUT_LABELS[low]) return INPUT_LABELS[low];
+	return `0x${low.toString(16).toUpperCase().padStart(2, "0")}`;
 }
 
 async function runPowerShell(script: string): Promise<string> {
