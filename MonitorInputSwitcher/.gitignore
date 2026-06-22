@@ -1,4 +1,5 @@
 node_modules/
 com.simonpoirier.monitorinput.sdPlugin/bin/
 com.simonpoirier.monitorinput.sdPlugin/logs/
+logs/
 *.streamDeckPlugin
